@@ -3,338 +3,63 @@ description:
 globs: 
 alwaysApply: true
 ---
-# Content Repurposer Tool - Product Requirements Document
+# Content Repurposer Tool
 
-## 1. Product Overview
+## Overview
+The Content Repurposer Tool is an AI-powered multi-agent system designed to automatically transform YouTube video content into multiple platform-optimized formats. Using AutoGen framework and Gemini API, it extracts video transcripts and generates tailored content for blogs, LinkedIn, and Twitter while maintaining the original message's integrity and platform-specific best practices.
 
-### 1.1 Purpose
-The Content Repurposer Tool is a multi-agent system designed to automatically transform YouTube video content into multiple platform-specific formats (blog articles, LinkedIn posts, and Twitter posts). The tool uses AI agents to handle different stages of content processing and generation, ensuring each piece of content is optimized for its target platform.
+## Core Features
+- YouTube transcript extraction using Apify
+- AI-powered content refinement and generation
+- Platform-specific content optimization
+- Automated quality control and editing
+- Multi-format output compilation
 
-### 1.2 Target Users
-- Content creators
-- Digital marketers
-- Social media managers
-- Business owners looking to repurpose their video content
+## Architecture
+The system employs a multi-agent architecture using AutoGen:
 
-## 2. System Architecture
+1. **Content Pipeline:**
+   - Extraction → Refinement → Topic Generation → Content Creation → Editing → Output
 
-### 2.1 High-Level Architecture
-The system follows a multi-agent architecture using AutoGen framework, with the following components:
-1. Content Extraction
-2. Transcript Refinement
-3. Topic Generation
-4. Content Generation
-5. Content Editing
-6. Output Compilation
+2. **Agent System:**
+   - User Proxy Agent (Coordinator)
+   - Extraction Agent (YouTube Processing)
+   - Transcript Refiner Agent (Text Improvement)
+   - Topic Generator Agent (Content Planning)
+   - Content Writer Agents (Platform-Specific Generation)
+   - Content Editor Agents (Quality Assurance)
 
-### 2.2 Agent Roles and AutoGen Implementation
+3. **Core Modules:**
+   - `tools/extraction.py`: YouTube transcript processing
+   - `tools/refinement.py`: Text cleaning and enhancement
+   - `tools/generators.py`: Content generation for each platform
+   - `tools/editors.py`: Content quality assurance and refinement
 
-The system will use AutoGen as a framework to create and manage multiple AI agents that communicate and collaborate with each other to complete the content repurposing task.
+4. **Agent Management:**
+   - `agents/agent_config.py`: Configuration and settings
+   - `agents/agent_prompts.py`: Specialized agent instructions
+   - `agents/agent_tools.py`: Agent capabilities and functions
+   - `agents/agent_setup.py`: Agent orchestration and workflow
 
-#### 2.2.1 Extraction Agent
-- Uses Apify to scrape and extract transcripts from YouTube videos
-- Outputs transcript in JSON format
-- Implemented as an AutoGen AssistantAgent with tool-calling capabilities
+## Content Specifications
+- Blog Posts: 500 words maximum, structured articles
+- LinkedIn Posts: 100 words maximum, professional insights
+- Twitter Posts: 280 characters maximum, engaging messages
 
-#### 2.2.2 Transcript Refiner Agent
-- Reviews raw transcripts and refines them for accuracy
-- Fixes transcription errors based on context
-- Outputs clean, accurate transcripts
-- Implemented as an AutoGen AssistantAgent with specialized prompt
+## Technical Stack
+- Python 3.9+
+- Google Gemini API (LLM)
+- AutoGen Framework (Multi-agent system)
+- Apify (Web scraping)
+- Environment Variables for API key management
 
-#### 2.2.3 Topic Generator Agent
-- Analyzes refined transcripts
-- Generates 15 unique topics (5 each for blog, LinkedIn, and Twitter)
-- Ensures topics are platform-appropriate
-- Considers word/character constraints for each platform
-- Implemented as an AutoGen AssistantAgent with specialized prompt
+## Usage Flow
+1. Accept YouTube URL input
+2. Extract and validate transcript
+3. Clean and refine transcript content
+4. Generate platform-specific topics
+5. Create optimized content for each platform
+6. Edit and polish all content
+7. Compile and format final outputs
 
-#### 2.2.4 Content Writer Agents
-- **Blog Writer Agent**: Creates blog posts under 500 words
-- **LinkedIn Writer Agent**: Creates LinkedIn posts under 100 words
-- **Twitter Writer Agent**: Creates Twitter posts under 280 characters
-- Each implemented as separate AutoGen AssistantAgents with specialized prompts
-
-#### 2.2.5 Content Editor Agents
-- **Blog Editor Agent**: Refines blog posts for grammar, information accuracy, and style
-- **LinkedIn Editor Agent**: Refines LinkedIn posts for grammar, information accuracy, and style
-- **Twitter Editor Agent**: Refines Twitter posts for grammar, information accuracy, and style
-- Each implemented as separate AutoGen AssistantAgents with specialized prompts
-
-#### 2.2.6 User Proxy Agent
-- Acts as the central coordinator for the multi-agent system
-- Handles input/output operations with the file system and external APIs
-- Facilitates message passing between agents
-- Implemented as an AutoGen UserProxyAgent with custom functions
-
-## 3. Functional Requirements
-
-### 3.1 Input Requirements
-- System must accept YouTube video URLs as input
-- Input validation to ensure valid YouTube URLs
-
-### 3.2 Content Extraction
-- System must integrate with Apify for YouTube transcript extraction
-- System must handle failed extraction attempts gracefully
-- Output must be in JSON format for further processing
-
-### 3.3 Transcript Refinement
-- System must process and clean raw transcripts
-- System must correct transcription errors based on context
-- System must maintain the original meaning while improving clarity
-
-### 3.4 Topic Generation
-- System must generate 5 unique topics for each platform (blog, LinkedIn, Twitter)
-- Topics must be relevant to the original content
-- Topics must be appropriate for each platform's format and audience
-
-### 3.5 Content Generation
-- System must generate content for each topic according to platform constraints:
-  - Blog: 500 words maximum
-  - LinkedIn: 100 words maximum
-  - Twitter: 280 characters maximum
-- Content must be professional and friendly in tone
-- Content must be accurate and relevant to the topic
-
-### 3.6 Content Editing
-- System must review and refine all generated content
-- Editing must focus on:
-  - Information accuracy
-  - Grammar correctness
-  - Tone and style consistency
-
-### 3.7 Output Compilation
-- System must compile all final content into a single text file
-- Output must be clearly organized by platform and topic
-
-## 4. Technical Requirements
-
-### 4.1 Development
-- Language: Python
-- LLM: Google Gemini API
-- Multi-Agent Framework: AutoGen
-- Web Scraping: Apify
-
-### 4.2 Apify Requirements
-- Apify SDK integration for Python
-- YouTube transcript extractor actor
-- API key management and authentication
-
-### 4.3 Gemini API Requirements
-- API key management
-- Implementation of all agent roles using Gemini API
-- Proper error handling for API requests
-
-### 4.4 AutoGen Requirements
-- Integration with AutoGen framework for multi-agent orchestration
-- Configuration of agent communication patterns
-- Definition of agent roles and specialized prompts
-- Implementation of custom tools for agents
-
-### 4.5 Deployment
-- Containerization for easy deployment
-- Deployment on render.com
-- Environment variable management for API keys and configurations
-
-## 5. Non-Functional Requirements
-
-### 5.1 Performance
-- Processing time should be reasonable (under 5 minutes for a standard YouTube video)
-- System should handle videos of varying lengths
-
-### 5.2 Reliability
-- System should gracefully handle API failures
-- System should implement retry mechanisms for transient errors
-
-### 5.3 Security
-- API keys should be stored securely
-- No user data should be stored persistently
-
-### 5.4 Scalability
-- System should be able to process multiple requests in sequence
-- Future expansion to handle batch processing
-
-## 6. Constraints and Assumptions
-
-### 6.1 Constraints
-- Limited by Apify API rate limits
-- Limited by Gemini API rate limits and token usage
-- Limited by YouTube API restrictions
-
-### 6.2 Assumptions
-- Videos have available transcripts or captions
-- Content is in a language supported by Gemini
-- Internet connectivity is available for API calls
-
-## 7. Future Enhancements
-- Support for additional content platforms (Instagram, Facebook, etc.)
-- Enhancement of topic generation with trend analysis
-- User interface for easy submission and retrieval of content
-- Support for batch processing of multiple videos
-
-
-# Content Repurposer Tool - Implementation Plan
-
-## Phase 1: Setup and Infrastructure
-
-### Step 1: Environment Setup
-1. Create a new Python project with a virtual environment
-2. Install necessary dependencies:
-   ```
-   pip install google-generativeai apify-client python-dotenv requests pyautogen
-   ```
-3. Create a `.env` file for storing API keys:
-   ```
-   GEMINI_API_KEY=your_gemini_api_key
-   APIFY_API_KEY=your_apify_api_key
-   ```
-4. Create a basic project structure:
-   ```
-   content-repurposer/
-   ├── .env
-   ├── main.py
-   ├── requirements.txt
-   ├── agents/
-   │   ├── __init__.py
-   │   ├── agent_config.py
-   │   ├── agent_prompts.py
-   │   ├── agent_tools.py
-   │   └── agent_setup.py
-   ├── tools/
-   │   ├── __init__.py
-   │   ├── extraction.py
-   │   ├── refinement.py
-   │   ├── generators.py
-   │   └── editors.py
-   └── utils/
-       ├── __init__.py
-       └── helpers.py
-   ```
-
-### Step 2: API and AutoGen Integration Setup
-1. Set up Apify client integration
-2. Set up Gemini API integration
-3. Configure AutoGen with Gemini as the LLM provider
-4. Create utility functions for API authentication and error handling
-
-## Phase 2: AutoGen Agent Implementation
-
-### Step 3: Implement AutoGen Configuration and Tools
-1. Set up AutoGen configuration for Gemini integration
-2. Create custom tool functions for:
-   - YouTube URL validation
-   - Apify integration for transcript extraction
-   - File handling for output storage
-3. Implement error handling for all tools
-4. Test the tools independently with sample inputs
-
-### Step 4: Define Agent Prompts and Specializations
-1. Create specialized system prompts for each agent:
-   - Extraction Agent prompt
-   - Transcript Refiner Agent prompt
-   - Topic Generator Agent prompt
-   - Writer Agents prompts (Blog, LinkedIn, Twitter)
-   - Editor Agents prompts (Blog, LinkedIn, Twitter)
-2. Define appropriate temperature and other generation parameters for each agent
-3. Test prompts with sample inputs to ensure they produce expected outputs
-
-### Step 5: Implement User Proxy Agent
-1. Create the UserProxyAgent as the central coordinator
-2. Implement functions for API calls and file system operations
-3. Add capability to pass messages between agents
-4. Set up appropriate permissions and tool access
-
-### Step 6: Implement Assistant Agents
-1. Create all required AssistantAgents:
-   - Extraction Agent with tool access
-   - Transcript Refiner Agent
-   - Topic Generator Agent
-   - Blog Writer Agent
-   - LinkedIn Writer Agent
-   - Twitter Writer Agent
-   - Blog Editor Agent
-   - LinkedIn Editor Agent
-   - Twitter Editor Agent
-2. Configure each with its specialized system prompt
-3. Set up appropriate LLM configurations for each agent
-4. Test each agent individually with sample inputs
-
-### Step 7: Define Agent Communication Patterns
-1. Configure the conversation flow between agents
-2. Set up agent groupings for related tasks
-3. Implement triggers for agent transitions
-4. Design fallback mechanisms for error handling
-5. Test the multi-agent communication with simple test cases
-
-## Phase 3: Multi-Agent Orchestration and Output
-
-### Step 8: Implement AutoGen Group Chat
-1. Create a group chat system that connects all agents
-2. Define the conversation flow and agent interaction patterns
-3. Implement agent message handling and routing
-4. Set up the conversation manager with appropriate settings
-5. Configure the conversation termination conditions
-
-### Step 9: Implement Output Processing
-1. Create a function to compile all final content into a single text file
-2. Implement formatting for clear organization by platform and topic
-3. Add timestamps and metadata to the output file
-4. Create a mechanism to extract the final outputs from the conversation
-5. Test with sample runs to ensure proper output formatting
-
-## Phase 4: Testing and Deployment
-
-### Step 10: Comprehensive Testing
-1. Test with various YouTube videos of different lengths and topics
-2. Test error handling by intentionally causing failures
-3. Measure performance and optimize if necessary
-4. Fix any bugs or issues discovered during testing
-
-### Step 11: Deployment Setup
-1. Create a Dockerfile for containerization:
-   ```
-   FROM python:3.9-slim
-   
-   WORKDIR /app
-   
-   COPY requirements.txt .
-   RUN pip install --no-cache-dir -r requirements.txt
-   
-   COPY . .
-   
-   CMD ["python", "main.py"]
-   ```
-2. Set up environment variables in render.com
-3. Configure deployment settings in render.com
-4. Deploy the application
-
-### Step 12: Post-Deployment Verification
-1. Test the deployed application with real-world inputs
-2. Monitor performance and resource usage
-3. Address any deployment-specific issues
-
-## Phase 5: Documentation and Refinement
-
-### Step 13: Create Documentation
-1. Write setup instructions
-2. Document API usage
-3. Create troubleshooting guide
-4. Document limitations and constraints
-
-### Step 14: Refinement and Optimization
-1. Review performance metrics
-2. Identify bottlenecks
-3. Implement optimizations
-4. Update documentation with any changes
-
-## Implementation Timeline
-
-| Phase | Tasks | Estimated Time |
-|-------|-------|---------------|
-| Phase 1 | Environment Setup, API Integration | 1-2 days |
-| Phase 2 | Implement All Agents | 4-5 days |
-| Phase 3 | Pipeline Integration, Output Compilation | 2-3 days |
-| Phase 4 | Testing, Deployment | 2-3 days |
-| Phase 5 | Documentation, Refinement | 1-2 days |
-
-**Total Estimated Time**: 10-15 days
+This tool serves content creators, digital marketers, and businesses looking to efficiently repurpose their video content across multiple platforms while maintaining quality and platform appropriateness.

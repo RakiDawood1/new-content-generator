@@ -1,87 +1,141 @@
 import os
 from dotenv import load_dotenv
 import google.generativeai as genai
-from autogen import config_list_from_json
 
 # Load environment variables
 load_dotenv()
 
-# Get API key from environment variables
+# Get API keys from environment variables
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
 APIFY_API_KEY = os.getenv('APIFY_API_KEY')
+OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+
+# Validate API keys
+if not GEMINI_API_KEY:
+    raise ValueError("GEMINI_API_KEY is not set in the .env file.")
+if not APIFY_API_KEY:
+    raise ValueError("APIFY_API_KEY is not set in the .env file.")
+if not OPENAI_API_KEY:
+    raise ValueError("OPENAI_API_KEY is not set in the .env file.")
 
 # Configure Gemini API
 genai.configure(api_key=GEMINI_API_KEY)
 
-# Define function to get the configuration for AutoGen agents using Gemini
-def get_gemini_config(model_name="gemini-1.5-pro", temperature=0.7, max_tokens=2048):
+def get_base_config():
     """
-    Returns a config for AutoGen to use with Gemini models.
-    
-    Args:
-        model_name (str): The Gemini model to use
-        temperature (float): The temperature for generation (0.0 to 1.0)
-        max_tokens (int): Maximum tokens to generate
-        
-    Returns:
-        dict: Configuration dict for AutoGen
+    Returns base configuration for AutoGen agents.
     """
-    if not GEMINI_API_KEY:
-        raise ValueError("GEMINI_API_KEY is not set in the .env file.")
+    return {
+        "config_list": [
+            {
+                "model": "gpt-4-turbo-preview",
+                "api_key": OPENAI_API_KEY,
+                "temperature": 0.7
+            }
+        ]
+    }
+
+def get_extraction_agent_config():
+    """Configuration for the Extraction Agent"""
+    config = get_base_config()
+    config["config_list"][0]["temperature"] = 0.2
     
-    config = {
-        "model": model_name,
-        "api_key": GEMINI_API_KEY,
-        "temperature": temperature,
-        "max_tokens": max_tokens
+    # Store tool-specific configurations separately
+    config["function_map"] = {
+        "validate_youtube_url": None,  # Will be set in agent_setup.py
+        "extract_youtube_transcript": None
     }
     
     return config
 
-# Create config list function for AutoGen
-def get_gemini_config_list(models=None):
-    """
-    Creates a configuration list for AutoGen with Gemini models.
-    
-    Args:
-        models (list): List of model configurations to use
-        
-    Returns:
-        list: List of configurations for AutoGen
-    """
-    if models is None:
-        models = [
-            {"model": "gemini-1.5-pro", "temperature": 0.7, "max_tokens": 2048}
-        ]
-    
-    config_list = []
-    for model_config in models:
-        config = get_gemini_config(
-            model_name=model_config.get("model", "gemini-1.5-pro"),
-            temperature=model_config.get("temperature", 0.7),
-            max_tokens=model_config.get("max_tokens", 2048)
-        )
-        config_list.append(config)
-    
-    return config_list
-
-# Agent-specific configurations
-def get_extraction_agent_config():
-    """Configuration for the Extraction Agent - lower temperature for more precise output"""
-    return get_gemini_config(temperature=0.2, max_tokens=4096)
-
 def get_refiner_agent_config():
-    """Configuration for the Transcript Refiner Agent - balanced temperature"""
-    return get_gemini_config(temperature=0.3, max_tokens=8192)
+    """Configuration for the Transcript Refiner Agent"""
+    config = get_base_config()
+    config["config_list"][0]["temperature"] = 0.3
+    
+    config["function_map"] = {
+        "refine_transcript": None
+    }
+    
+    return config
 
 def get_topic_generator_config():
-    """Configuration for the Topic Generator Agent - higher temperature for creativity"""
-    return get_gemini_config(temperature=0.8, max_tokens=4096)
+    """Configuration for the Topic Generator Agent"""
+    config = get_base_config()
+    config["config_list"][0]["temperature"] = 0.8
+    
+    config["function_map"] = {
+        "generate_content_topics": None
+    }
+    
+    return config
 
 def get_writer_agent_config():
-    """Configuration for the Writer Agents - high temperature for creative content"""
-    return get_gemini_config(temperature=0.7, max_tokens=4096)
+    """Configuration for the Writer Agents"""
+    config = get_base_config()
+    config["config_list"][0]["temperature"] = 0.7
+    
+    config["function_map"] = {
+        "generate_blog_post": None,
+        "generate_linkedin_post": None,
+        "generate_twitter_post": None
+    }
+    
+    return config
 
 def get_editor_agent_config():
-    """Configuration for the Editor Agents - low temperature for precise edits"""
-    return get_gemini_config(temperature=0.2, max_tokens=4096)
+    """Configuration for the Editor Agents"""
+    config = get_base_config()
+    config["config_list"][0]["temperature"] = 0.2
+    
+    config["function_map"] = {
+        "edit_blog_post": None,
+        "edit_linkedin_post": None,
+        "edit_twitter_post": None
+    }
+    
+    return config
+
+def get_group_chat_config():
+    """Configuration for group chat management"""
+    config = get_base_config()
+    config["config_list"][0]["temperature"] = 0.5
+    config.update({
+        "max_round": 10,
+        "human_input_mode": "NEVER"
+    })
+    return config
+
+def get_gemini_config(model_name="gemini-1.5-pro", temperature=0.7):
+    """Returns a config for using Gemini models."""
+    return {
+        "model": model_name,
+        "api_key": GEMINI_API_KEY,
+        "temperature": temperature,
+        "safety_settings": [
+            {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
+            {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
+            {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
+            {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"}
+        ]
+    }
+
+# Tool configurations (to be used by agents but not included in LLM config)
+TOOL_CONFIGS = {
+    "extraction": {
+        "apify_api_key": APIFY_API_KEY,
+        "max_retries": 5,
+        "timeout": 600
+    },
+    "content_limits": {
+        "blog": 500,      # words
+        "linkedin": 100,  # words
+        "twitter": 280   # characters
+    },
+    "timeouts": {
+        "extraction": 600,   # 10 minutes
+        "refinement": 300,   # 5 minutes
+        "generation": 300,   # 5 minutes
+        "editing": 300      # 5 minutes
+    }
+}

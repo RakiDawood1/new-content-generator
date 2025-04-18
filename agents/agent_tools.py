@@ -6,12 +6,19 @@ import logging
 from apify_client import ApifyClient
 import google.generativeai as genai
 from dotenv import load_dotenv
+from openai import OpenAI
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # Load environment variables
 load_dotenv()
+
+# Initialize DeepSeek client
+deepseek_client = OpenAI(
+    api_key=os.getenv('DEEPSEEK_API_KEY'),
+    base_url="https://api.deepseek.com/v1"
+)
 
 # Initialize Apify client
 apify_api_key = os.getenv('APIFY_API_KEY')
@@ -22,7 +29,7 @@ if not apify_api_key:
 if not gemini_api_key:
     raise ValueError("GEMINI_API_KEY is not set in the .env file.")
 
-client = ApifyClient(apify_api_key)
+apify_client = ApifyClient(apify_api_key)
 genai.configure(api_key=gemini_api_key)
 
 # Tool functions for agents
@@ -110,13 +117,13 @@ def extract_youtube_transcript(url):
 
         # Run the YouTube transcript Actor and wait for it to finish
         logging.info("Starting YouTube Actor run...")
-        run = client.actor("1s7eXiaukVuOr4Ueg").call(run_input=run_input)
+        run = apify_client.actor("1s7eXiaukVuOr4Ueg").call(run_input=run_input)
         
         # Check the run status
-        run_info = client.run(run["id"]).get()
+        run_info = apify_client.run(run["id"]).get()
         
         # Wait for completion with a timeout
-        max_wait_time = 180  # 3 minutes timeout
+        max_wait_time = 600  # 10 minutes timeout for longer videos
         start_time = time.time()
         
         while run_info['status'] in ['RUNNING', 'READY']:
@@ -128,13 +135,13 @@ def extract_youtube_transcript(url):
             
             logging.info(f"Current status: {run_info['status']}. Waiting...")
             time.sleep(5)
-            run_info = client.run(run["id"]).get()
+            run_info = apify_client.run(run["id"]).get()
         
         if run_info['status'] == 'SUCCEEDED':
             logging.info(f"Actor run completed successfully. Dataset ID: {run['defaultDatasetId']}")
             
             # Fetch results from the dataset
-            items = list(client.dataset(run["defaultDatasetId"]).iterate_items())
+            items = list(apify_client.dataset(run["defaultDatasetId"]).iterate_items())
             
             if not items:
                 return {
@@ -154,22 +161,44 @@ def extract_youtube_transcript(url):
             
             # Process the transcript into a cleaner format
             transcript_text = ""
-            for caption in video_data['captions']:
-                if 'text' in caption:
-                    transcript_text += caption['text'] + " "
+            captions_list = video_data.get('captions', [])
             
-            # Basic video info
-            video_info = {
-                "title": video_data.get('title', 'Unknown Title'),
-                "channel": video_data.get('channelName', 'Unknown Channel'),
-                "published_date": video_data.get('datePublished', 'Unknown Date')
-            }
+            if captions_list:
+                logging.info(f"Attempting to join {len(captions_list)} caption items.")
+                try:
+                    # Join captions and clean up
+                    transcript_text = " ".join(captions_list)
+                    # Clean up any HTML entities and extra spaces
+                    transcript_text = transcript_text.replace('&#39;', "'")
+                    transcript_text = re.sub(r'\s+', ' ', transcript_text).strip()
+                    logging.info("Successfully joined captions.")
+                except Exception as join_err:
+                    logging.error(f"Error joining captions list: {join_err}")
+                    transcript_text = ""
+            else:
+                logging.warning("Captions list is empty after retrieving from video_data.")
+
+            # Log final text using WARNING level BEFORE the check
+            logging.warning(f"Transcript passed to refinement (first 500 chars): '{transcript_text[:500]}'")
             
+            # Check if transcript is empty OR whitespace only
+            if not transcript_text or not transcript_text.strip():
+                logging.error("Failed to process captions into non-empty transcript text.")
+                return {
+                    "success": False,
+                    "error": "Failed to process captions into transcript (empty or whitespace only)"
+                }
+            
+            # Return successful result with transcript and video info
             return {
                 "success": True,
-                "video_info": video_info,
-                "transcript": transcript_text.strip(),
-                "raw_data": video_data
+                "video_info": {
+                    "title": video_data.get('title', 'Unknown Title'),
+                    "channel": video_data.get('channelName', 'Unknown Channel'),
+                    "published_date": video_data.get('datePublished', 'Unknown Date')
+                },
+                "transcript": transcript_text,
+                "raw_data": video_data  # Keep raw data for debugging if needed
             }
         else:
             error_message = run_info.get('errorMessage', 'Unknown error occurred')
@@ -185,52 +214,64 @@ def extract_youtube_transcript(url):
             "error": f"Extraction error: {str(e)}"
         }
 
-def refine_transcript(transcript_text):
+def call_deepseek_with_retry(prompt, max_retries=3, initial_wait=2):
     """
-    Refines a transcript using Gemini to fix errors and improve quality.
-    
-    Args:
-        transcript_text (str): The raw transcript text to refine
-        
-    Returns:
-        dict: A dictionary with refinement result and refined transcript if successful
+    Call DeepSeek API with retry logic for rate limits.
     """
-    if not transcript_text or transcript_text.strip() == "":
+    for attempt in range(1, max_retries + 1):
+        try:
+            response = deepseek_client.chat.completions.create(
+                model="deepseek-chat",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.7,
+                max_tokens=2048
+            )
+            return response.choices[0].message.content
+        except Exception as e:
+            if attempt == max_retries:
+                logging.error(f"Failed after {max_retries} attempts: {str(e)}")
+                raise
+            wait_time = initial_wait * (2 ** (attempt - 1))
+            logging.info(f"Retry attempt {attempt}/{max_retries}. Waiting {wait_time} seconds...")
+            time.sleep(wait_time)
+
+def refine_transcript(transcript):
+    """
+    Refines a transcript using DeepSeek to fix errors and improve quality.
+    """
+    if not transcript:
         return {
             "success": False,
-            "error": "Empty transcript provided. Nothing to refine."
+            "error": "No transcript provided"
         }
-    
-    logging.info("Refining transcript with Gemini...")
-    
+
     try:
-        # Use Gemini to refine the transcript
-        gemini_model = genai.GenerativeModel(model_name="gemini-1.5-pro")
+        logging.info("Refining transcript with DeepSeek...")
         
+        # Prepare the prompt
         prompt = f"""
-        Please refine the following transcript for clarity, grammar, and accuracy. Fix any transcription errors 
-        based on context, correct misspellings, and improve the overall readability while maintaining the 
-        original meaning and content.
+        Please refine this transcript to improve readability and clarity.
+        Fix any grammar, punctuation, or formatting issues while preserving the original meaning.
         
         Transcript:
-        {transcript_text}
+        {transcript[:3000]}  # Limit length to avoid token limits
+        
+        Return only the refined text without any additional comments.
         """
         
-        response = gemini_model.generate_content(prompt)
+        refined_transcript = call_deepseek_with_retry(prompt)
         
-        if response and hasattr(response, 'text'):
-            refined_transcript = response.text.strip()
+        if refined_transcript:
             return {
                 "success": True,
-                "original_transcript": transcript_text,
-                "refined_transcript": refined_transcript
+                "refined_transcript": refined_transcript.strip()
             }
         else:
             return {
                 "success": False,
-                "error": "Failed to generate refined transcript. Empty or invalid response from Gemini."
+                "error": "Failed to generate refined transcript. Empty or invalid response from DeepSeek."
             }
-    
+            
     except Exception as e:
         logging.error(f"Error during transcript refinement: {str(e)}")
         return {
@@ -238,93 +279,90 @@ def refine_transcript(transcript_text):
             "error": f"Refinement error: {str(e)}"
         }
 
-def generate_content_topics(refined_transcript):
+def generate_content_topics(transcript, content_type="all"):
     """
-    Generates content topics for different platforms based on the refined transcript.
-    
-    Args:
-        refined_transcript (str): The refined transcript text
-        
-    Returns:
-        dict: A dictionary with topic generation result and topics if successful
+    Generate content topics based on the transcript.
+    Handles longer transcripts by processing them in chunks.
     """
-    if not refined_transcript or refined_transcript.strip() == "":
-        return {
-            "success": False,
-            "error": "Empty transcript provided. Cannot generate topics."
-        }
-    
-    logging.info("Generating content topics with Gemini...")
-    
     try:
-        # Use Gemini to generate topics
-        gemini_model = genai.GenerativeModel(model_name="gemini-1.5-pro", temperature=0.8)
+        logging.info("Generating content topics with DeepSeek...")
         
-        prompt = f"""
-        Based on the following transcript, generate 15 unique content topics:
-        - 5 blog post topics (posts up to 500 words)
-        - 5 LinkedIn post topics (posts up to 100 words)
-        - 5 Twitter post topics (posts up to 280 characters)
+        # Split transcript into chunks of 2000 characters with 200 char overlap
+        chunk_size = 2000
+        overlap = 200
+        chunks = []
         
-        Ensure each topic is appropriate for its platform, audience, and length constraints.
-        For each topic, provide a brief description of what the content should cover.
+        for i in range(0, len(transcript), chunk_size - overlap):
+            chunk = transcript[i:i + chunk_size]
+            chunks.append(chunk)
+            if len(chunks) >= 3:  # Limit to first 3 chunks (6000 chars) to avoid too many API calls
+                break
         
-        Format your response as JSON with three arrays: "blog_topics", "linkedin_topics", and "twitter_topics".
-        
-        Transcript:
-        {refined_transcript}
-        """
-        
-        response = gemini_model.generate_content(prompt)
-        
-        if response and hasattr(response, 'text'):
-            # Try to parse JSON from the response
-            try:
-                # Extract JSON from response if it's embedded in text
-                response_text = response.text
-                
-                # Find JSON content if wrapped in backticks or other formatting
-                json_match = re.search(r'```json\s*([\s\S]*?)\s*```', response_text)
-                if json_match:
-                    json_str = json_match.group(1)
-                else:
-                    # Try to find JSON-like content between curly braces
-                    json_match = re.search(r'(\{[\s\S]*\})', response_text)
-                    if json_match:
-                        json_str = json_match.group(1)
-                    else:
-                        json_str = response_text
-                
-                topics = json.loads(json_str)
-                
-                # Validate the format
-                if not isinstance(topics, dict):
-                    raise ValueError("Response is not a JSON object")
-                
-                if "blog_topics" not in topics or "linkedin_topics" not in topics or "twitter_topics" not in topics:
-                    raise ValueError("Missing required topic arrays in response")
-                
-                return {
-                    "success": True,
-                    "topics": topics
-                }
+        all_topics = []
+        for chunk in chunks:
+            prompt = f"""
+            Based on this part of the transcript, generate content topics according to these requirements:
+            - 1 blog post topic (informative, detailed content up to 500 words)
+            - 2 LinkedIn post topics (professional, insightful content up to 100 words)
+            - 5 Twitter post topics (concise, engaging content up to 280 characters)
             
-            except (json.JSONDecodeError, ValueError) as e:
-                # If JSON parsing fails, format the text response ourselves
-                logging.error(f"Failed to parse JSON from response: {str(e)}")
-                
-                # Process text response into structured format
-                return {
-                    "success": False,
-                    "error": f"Failed to parse topics into JSON format: {str(e)}",
-                    "raw_response": response.text
-                }
+            Return your response in this exact JSON format:
+            [
+                {{
+                    "title": "Catchy Title Here",
+                    "description": "Brief description of the topic",
+                    "key_points": ["Point 1", "Point 2", "Point 3"],
+                    "target_audience": "Description of target audience",
+                    "platform": "blog|linkedin|twitter"
+                }}
+            ]
+            
+            Make sure to:
+            1. Use proper JSON formatting with double quotes for strings
+            2. Include exactly these fields: title, description, key_points (as array), target_audience, platform
+            3. Return only the JSON array, no other text
+            4. Focus on unique topics not covered in previous chunks
+            5. Ensure each topic is appropriate for its target platform
+            
+            Transcript chunk:
+            {chunk}
+            """
+            
+            response = call_deepseek_with_retry(prompt)
+            
+            if response:
+                try:
+                    # Clean the response to handle potential markdown formatting
+                    cleaned_response = response.strip().strip('`').strip()
+                    if cleaned_response.startswith('json'):
+                        cleaned_response = cleaned_response[4:].strip()
+                    
+                    chunk_topics = json.loads(cleaned_response)
+                    all_topics.extend(chunk_topics)
+                except json.JSONDecodeError as e:
+                    logging.error(f"JSON Parse Error for chunk: {str(e)}")
+                    logging.error(f"Raw Response: {response}")
+                    continue
+        
+        if all_topics:
+            # Filter and limit topics by platform
+            blog_topics = [t for t in all_topics if t.get("platform") == "blog"][:1]
+            linkedin_topics = [t for t in all_topics if t.get("platform") == "linkedin"][:2]
+            twitter_topics = [t for t in all_topics if t.get("platform") == "twitter"][:5]
+            
+            # Combine filtered topics
+            filtered_topics = blog_topics + linkedin_topics + twitter_topics
+            
+            return {
+                "success": True,
+                "topics": filtered_topics
+            }
         else:
             return {
                 "success": False,
-                "error": "Failed to generate topics. Empty or invalid response from Gemini."
+                "error": "Failed to generate any valid topics from the transcript chunks."
             }
-    
+            
     except Exception as e:
         logging.error(f"Error during topic generation: {str(e)}")
         return {
@@ -334,339 +372,308 @@ def generate_content_topics(refined_transcript):
 
 def generate_blog_post(topic, transcript):
     """
-    Generates a blog post based on a topic and transcript.
-    
-    Args:
-        topic (dict): The topic information with title and description
-        transcript (str): The refined transcript text
-        
-    Returns:
-        dict: A dictionary with generation result and blog post if successful
+    Generate a blog post based on the topic and transcript.
+    For longer transcripts, it searches for relevant sections to use as context.
     """
-    if not topic or not transcript:
-        return {
-            "success": False,
-            "error": "Missing required inputs (topic or transcript)."
-        }
-    
-    logging.info(f"Generating blog post for topic: {topic.get('title', 'Unknown')}")
-    
     try:
-        # Use Gemini to generate the blog post
-        gemini_model = genai.GenerativeModel(model_name="gemini-1.5-pro", temperature=0.7)
+        # First, find the most relevant chunk of the transcript for this topic
+        search_prompt = f"""
+        Rate how relevant this transcript chunk is to the following topic on a scale of 1-5:
         
-        prompt = f"""
-        Create a professional, informative blog post of up to 500 words based on the following topic and transcript.
+        Topic:
+        {json.dumps(topic, indent=2)}
         
-        Topic: {topic.get('title', 'Unknown')}
-        Topic Description: {topic.get('description', 'No description provided')}
+        Transcript chunk:
+        {transcript[:2000]}
         
-        Use information from this transcript:
-        {transcript[:5000]}  # Limit transcript length to avoid hitting token limits
-        
-        The blog post should:
-        - Have a clear structure with introduction, body, and conclusion
-        - Include 2-3 main points or insights from the transcript
-        - Be written in a professional but conversational tone
-        - Include a strong headline
-        - End with a brief call-to-action or concluding thought
-        
-        Format the blog post with proper headings, paragraphs, and spacing.
+        Return ONLY a single number 1-5, where 5 is most relevant.
         """
         
-        response = gemini_model.generate_content(prompt)
+        relevance_response = call_deepseek_with_retry(prompt=search_prompt)
+        # Extract just the first number from the response
+        relevance_score = int(''.join(filter(str.isdigit, relevance_response[:2])) or "1")
         
-        if response and hasattr(response, 'text'):
-            blog_post = response.text.strip()
+        # If first chunk isn't very relevant (score < 3), check middle and end chunks
+        if relevance_score < 3 and len(transcript) > 4000:
+            mid_point = len(transcript) // 2
+            mid_chunk = transcript[mid_point-1000:mid_point+1000]
+            end_chunk = transcript[-2000:]
             
-            # Verify word count
-            word_count = len(blog_post.split())
-            if word_count > 550:  # Allow a small buffer over 500
-                logging.warning(f"Blog post exceeds 500 words (actual: {word_count}). It may need editing.")
+            mid_response = call_deepseek_with_retry(
+                prompt=search_prompt.replace(transcript[:2000], mid_chunk)
+            )
+            mid_score = int(''.join(filter(str.isdigit, mid_response[:2])) or "1")
             
+            end_response = call_deepseek_with_retry(
+                prompt=search_prompt.replace(transcript[:2000], end_chunk)
+            )
+            end_score = int(''.join(filter(str.isdigit, end_response[:2])) or "1")
+            
+            # Use the most relevant chunk
+            if mid_score > relevance_score and mid_score > end_score:
+                transcript_chunk = mid_chunk
+            elif end_score > relevance_score and end_score > mid_score:
+                transcript_chunk = end_chunk
+            else:
+                transcript_chunk = transcript[:2000]
+        else:
+            transcript_chunk = transcript[:2000]
+        
+        prompt = f"""
+        Create a blog post (max 500 words) based on this topic and transcript chunk.
+        If the chunk seems incomplete or you need more context, focus on the aspects you can confidently write about.
+        
+        Topic:
+        {json.dumps(topic, indent=2)}
+        
+        Transcript chunk to focus on:
+        {transcript_chunk}
+        
+        Guidelines:
+        - Start with a clear title using markdown heading (# Title)
+        - Engaging introduction
+        - Clear structure with subheadings
+        - Professional tone
+        - Actionable insights
+        - Strong conclusion
+        - If the chunk feels incomplete, acknowledge any limitations in coverage
+        
+        Return the blog post with proper markdown formatting.
+        """
+        
+        blog_content = call_deepseek_with_retry(prompt)
+        
+        if blog_content:
             return {
                 "success": True,
-                "topic": topic.get('title', 'Unknown'),
-                "content": blog_post,
-                "word_count": word_count
+                "content": blog_content.strip(),
+                "topic": topic["title"]
             }
         else:
             return {
                 "success": False,
-                "error": "Failed to generate blog post. Empty or invalid response from Gemini."
+                "error": "Failed to generate blog post. Empty or invalid response from DeepSeek."
             }
-    
+            
     except Exception as e:
         logging.error(f"Error during blog post generation: {str(e)}")
         return {
             "success": False,
-            "error": f"Blog post generation error: {str(e)}"
+            "error": f"Blog generation error: {str(e)}"
         }
 
 def generate_twitter_post(topic, transcript):
     """
-    Generates a Twitter post based on a topic and transcript.
-    
-    Args:
-        topic (dict): The topic information with title and description
-        transcript (str): The refined transcript text
-        
-    Returns:
-        dict: A dictionary with generation result and Twitter post if successful
+    Generate a Twitter post based on the topic and transcript.
     """
-    if not topic or not transcript:
-        return {
-            "success": False,
-            "error": "Missing required inputs (topic or transcript)."
-        }
-    
-    logging.info(f"Generating Twitter post for topic: {topic.get('title', 'Unknown')}")
-    
     try:
-        # Use Gemini to generate the Twitter post
-        gemini_model = genai.GenerativeModel(model_name="gemini-1.5-pro", temperature=0.7)
-        
         prompt = f"""
-        Create a concise Twitter post of up to 280 characters based on the following topic and transcript.
+        Create an engaging tweet (max 280 characters) based on this topic and transcript.
         
-        Topic: {topic.get('title', 'Unknown')}
-        Topic Description: {topic.get('description', 'No description provided')}
+        Topic:
+        {json.dumps(topic, indent=2)}
         
-        Use information from this transcript:
-        {transcript[:2000]}  # Limit transcript length to avoid hitting token limits
+        Reference material:
+        {transcript[:1000]}
         
-        The Twitter post should:
-        - Begin with a hook that grabs attention
-        - Focus on a single clear takeaway or insight
-        - Use simple, direct language
-        - Include 1-2 relevant hashtags if space permits
-        - Leave some character space for comments when shared
+        Guidelines:
+        - Attention-grabbing
+        - Clear message
+        - Include hashtags
+        - Encourage engagement
         
-        The post MUST be 280 characters or less.
+        Return only the tweet text.
         """
         
-        response = gemini_model.generate_content(prompt)
+        tweet_content = call_deepseek_with_retry(prompt)
         
-        if response and hasattr(response, 'text'):
-            twitter_post = response.text.strip()
-            
-            # Verify character count
-            char_count = len(twitter_post)
-            if char_count > 280:
-                logging.warning(f"Twitter post exceeds 280 characters (actual: {char_count}). Truncating.")
-                twitter_post = twitter_post[:277] + "..."
-                char_count = len(twitter_post)
-            
+        if tweet_content:
+            # Ensure tweet length
+            tweet = tweet_content.strip()
+            if len(tweet) > 280:
+                tweet = tweet[:277] + "..."
+                
             return {
                 "success": True,
-                "topic": topic.get('title', 'Unknown'),
-                "content": twitter_post,
-                "char_count": char_count
+                "content": tweet,
+                "topic": topic["title"]
             }
         else:
             return {
                 "success": False,
-                "error": "Failed to generate Twitter post. Empty or invalid response from Gemini."
+                "error": "Failed to generate Twitter post. Empty or invalid response from DeepSeek."
             }
-    
+            
     except Exception as e:
         logging.error(f"Error during Twitter post generation: {str(e)}")
         return {
             "success": False,
-            "error": f"Twitter post generation error: {str(e)}"
+            "error": f"Twitter generation error: {str(e)}"
         }
 
-def edit_blog_post(blog_post):
+def edit_blog_post(post_content):
     """
-    Edits and refines a blog post for grammar, accuracy, and style.
-    
-    Args:
-        blog_post (dict): The blog post content and metadata
-        
-    Returns:
-        dict: A dictionary with editing result and edited blog post if successful
+    Edit and improve a blog post.
     """
-    if not blog_post or "content" not in blog_post:
-        return {
-            "success": False,
-            "error": "Missing required input (blog post content)."
-        }
-    
-    logging.info(f"Editing blog post: {blog_post.get('topic', 'Unknown')}")
-    
     try:
-        # Use Gemini to edit the blog post
-        gemini_model = genai.GenerativeModel(model_name="gemini-1.5-pro", temperature=0.2)
-        
         prompt = f"""
-        Edit and improve the following blog post for grammar, clarity, style, and overall quality.
-        Ensure it remains under 500 words and maintains a professional yet conversational tone.
-        Verify that the structure is logical, with clear headings, introduction, and conclusion.
-        Fix any factual errors or inconsistencies.
+        Edit and improve this blog post while maintaining its core message.
+        Focus on:
+        - Clarity and flow
+        - Grammar and style
+        - Engagement
+        - Professional tone
         
-        Blog Post:
-        {blog_post['content']}
+        Blog post:
+        {post_content}
         
-        Provide the complete edited version of the blog post.
+        Return the edited post only.
         """
         
-        response = gemini_model.generate_content(prompt)
+        edited_content = call_deepseek_with_retry(prompt)
         
-        if response and hasattr(response, 'text'):
-            edited_post = response.text.strip()
-            
-            # Verify word count
-            word_count = len(edited_post.split())
-            if word_count > 550:  # Allow a small buffer over 500
-                logging.warning(f"Edited blog post exceeds 500 words (actual: {word_count}). It may need further editing.")
-            
+        if edited_content:
             return {
                 "success": True,
-                "topic": blog_post.get('topic', 'Unknown'),
-                "original_content": blog_post['content'],
-                "edited_content": edited_post,
-                "word_count": word_count
+                "edited_content": edited_content.strip()
             }
         else:
             return {
                 "success": False,
-                "error": "Failed to edit blog post. Empty or invalid response from Gemini."
+                "error": "Failed to edit blog post. Empty or invalid response from DeepSeek."
             }
-    
+            
     except Exception as e:
         logging.error(f"Error during blog post editing: {str(e)}")
         return {
             "success": False,
-            "error": f"Blog post editing error: {str(e)}"
+            "error": f"Blog editing error: {str(e)}"
         }
 
-def edit_linkedin_post(linkedin_post):
+def edit_linkedin_post(post_content):
     """
-    Edits and refines a LinkedIn post for grammar, accuracy, and style.
-    
-    Args:
-        linkedin_post (dict): The LinkedIn post content and metadata
-        
-    Returns:
-        dict: A dictionary with editing result and edited LinkedIn post if successful
+    Edit and improve a LinkedIn post.
     """
-    if not linkedin_post or "content" not in linkedin_post:
-        return {
-            "success": False,
-            "error": "Missing required input (LinkedIn post content)."
-        }
-    
-    logging.info(f"Editing LinkedIn post: {linkedin_post.get('topic', 'Unknown')}")
-    
     try:
-        # Use Gemini to edit the LinkedIn post
-        gemini_model = genai.GenerativeModel(model_name="gemini-1.5-pro", temperature=0.2)
-        
         prompt = f"""
-        Edit and improve the following LinkedIn post for grammar, clarity, style, and overall quality.
-        Ensure it remains under 100 words and maintains a professional tone appropriate for LinkedIn.
-        Check that it has a strong opening, clear message, and effective call-to-action.
-        Verify that hashtags are relevant and properly formatted.
+        Edit and improve this LinkedIn post while maintaining its core message.
+        Focus on:
+        - Professional tone
+        - Clear value proposition
+        - Engagement
+        - Appropriate hashtags
         
-        LinkedIn Post:
-        {linkedin_post['content']}
+        Post:
+        {post_content}
         
-        Provide the complete edited version of the LinkedIn post.
+        Return the edited post only.
         """
         
-        response = gemini_model.generate_content(prompt)
+        edited_content = call_deepseek_with_retry(prompt)
         
-        if response and hasattr(response, 'text'):
-            edited_post = response.text.strip()
-            
-            # Verify word count
-            word_count = len(edited_post.split())
-            if word_count > 110:  # Allow a small buffer over 100
-                logging.warning(f"Edited LinkedIn post exceeds 100 words (actual: {word_count}). It may need further editing.")
-            
+        if edited_content:
             return {
                 "success": True,
-                "topic": linkedin_post.get('topic', 'Unknown'),
-                "original_content": linkedin_post['content'],
-                "edited_content": edited_post,
-                "word_count": word_count
+                "edited_content": edited_content.strip()
             }
         else:
             return {
                 "success": False,
-                "error": "Failed to edit LinkedIn post. Empty or invalid response from Gemini."
+                "error": "Failed to edit LinkedIn post. Empty or invalid response from DeepSeek."
             }
-    
+            
     except Exception as e:
         logging.error(f"Error during LinkedIn post editing: {str(e)}")
         return {
             "success": False,
-            "error": f"LinkedIn post editing error: {str(e)}"
+            "error": f"LinkedIn editing error: {str(e)}"
         }
 
-def edit_twitter_post(twitter_post):
+def edit_twitter_post(post_content):
     """
-    Edits and refines a Twitter post for grammar, accuracy, and impact.
-    
-    Args:
-        twitter_post (dict): The Twitter post content and metadata
-        
-    Returns:
-        dict: A dictionary with editing result and edited Twitter post if successful
+    Edit and improve a Twitter post.
     """
-    if not twitter_post or "content" not in twitter_post:
-        return {
-            "success": False,
-            "error": "Missing required input (Twitter post content)."
-        }
-    
-    logging.info(f"Editing Twitter post: {twitter_post.get('topic', 'Unknown')}")
-    
     try:
-        # Use Gemini to edit the Twitter post
-        gemini_model = genai.GenerativeModel(model_name="gemini-1.5-pro", temperature=0.2)
-        
         prompt = f"""
-        Edit and improve the following Twitter post for grammar, clarity, impact, and overall quality.
-        Ensure it remains under 280 characters and has a strong, engaging message.
-        Make sure every word serves a purpose and the language is concise and direct.
+        Edit and improve this tweet while maintaining its core message.
+        Ensure it's within 280 characters.
+        Focus on:
+        - Impact and clarity
+        - Engagement
+        - Appropriate hashtags
         
-        Twitter Post:
-        {twitter_post['content']}
+        Tweet:
+        {post_content}
         
-        Provide the complete edited version of the Twitter post.
+        Return the edited tweet only.
         """
         
-        response = gemini_model.generate_content(prompt)
+        edited_content = call_deepseek_with_retry(prompt)
         
-        if response and hasattr(response, 'text'):
-            edited_post = response.text.strip()
-            
-            # Verify character count
-            char_count = len(edited_post)
-            if char_count > 280:
-                logging.warning(f"Edited Twitter post exceeds 280 characters (actual: {char_count}). Truncating.")
-                edited_post = edited_post[:277] + "..."
-                char_count = len(edited_post)
-            
+        if edited_content:
+            tweet = edited_content.strip()
+            if len(tweet) > 280:
+                tweet = tweet[:277] + "..."
+                
             return {
                 "success": True,
-                "topic": twitter_post.get('topic', 'Unknown'),
-                "original_content": twitter_post['content'],
-                "edited_content": edited_post,
-                "char_count": char_count
+                "edited_content": tweet
             }
         else:
             return {
                 "success": False,
-                "error": "Failed to edit Twitter post. Empty or invalid response from Gemini."
+                "error": "Failed to edit Twitter post. Empty or invalid response from DeepSeek."
             }
-    
+            
     except Exception as e:
         logging.error(f"Error during Twitter post editing: {str(e)}")
         return {
             "success": False,
-            "error": f"Twitter post editing error: {str(e)}"
+            "error": f"Twitter editing error: {str(e)}"
+        }
+
+def generate_linkedin_post(topic, transcript):
+    """
+    Generate a LinkedIn post based on the topic and transcript.
+    """
+    try:
+        prompt = f"""
+        Create a LinkedIn post (max 100 words) based on this topic and transcript.
+        
+        Topic:
+        {json.dumps(topic, indent=2)}
+        
+        Reference material:
+        {transcript[:1500]}
+        
+        Guidelines:
+        - Professional tone
+        - Clear value proposition
+        - Include relevant hashtags
+        - Call to action
+        
+        Return only the post text.
+        """
+        
+        post_content = call_deepseek_with_retry(prompt)
+        
+        if post_content:
+            return {
+                "success": True,
+                "content": post_content.strip(),
+                "topic": topic["title"]
+            }
+        else:
+            return {
+                "success": False,
+                "error": "Failed to generate LinkedIn post. Empty or invalid response from DeepSeek."
+            }
+            
+    except Exception as e:
+        logging.error(f"Error during LinkedIn post generation: {str(e)}")
+        return {
+            "success": False,
+            "error": f"LinkedIn generation error: {str(e)}"
         }
 
 def save_output(content_data, output_file="repurposed_content.txt"):
@@ -705,27 +712,70 @@ def save_output(content_data, output_file="repurposed_content.txt"):
             if "blog_posts" in content_data and content_data["blog_posts"]:
                 f.write(f"## BLOG POSTS\n\n")
                 for i, post in enumerate(content_data["blog_posts"], 1):
-                    f.write(f"### Blog Post {i}: {post.get('topic', 'Untitled')}\n\n")
-                    f.write(f"{post.get('edited_content', post.get('content', 'No content'))}\n\n")
-                    f.write(f"Word count: {post.get('word_count', 'Unknown')}\n\n")
+                    # Extract title from the content if it starts with a markdown heading
+                    content = post.get('edited_content', post.get('content', ''))
+                    title = None
+                    
+                    # Try to find the title in the content
+                    lines = content.split('\n')
+                    for line in lines:
+                        if line.strip().startswith('# '):
+                            title = line.strip('# ').strip()
+                            break
+                    
+                    if not title:
+                        title = post.get('topic', 'Untitled')
+                    
+                    f.write(f"### Blog Post {i}: {title}\n\n")
+                    f.write(f"{content}\n\n")
+                    # Calculate word count
+                    word_count = len(content.split())
+                    f.write(f"Word count: {word_count}\n\n")
                     f.write("----------\n\n")
             
             # Write LinkedIn posts
             if "linkedin_posts" in content_data and content_data["linkedin_posts"]:
                 f.write(f"## LINKEDIN POSTS\n\n")
                 for i, post in enumerate(content_data["linkedin_posts"], 1):
-                    f.write(f"### LinkedIn Post {i}: {post.get('topic', 'Untitled')}\n\n")
-                    f.write(f"{post.get('edited_content', post.get('content', 'No content'))}\n\n")
-                    f.write(f"Word count: {post.get('word_count', 'Unknown')}\n\n")
+                    content = post.get('edited_content', post.get('content', ''))
+                    
+                    # Try to extract title from content (usually in bold at the start)
+                    title = None
+                    lines = content.split('\n')
+                    for line in lines:
+                        if line.strip().startswith('**') and line.strip().endswith('**'):
+                            title = line.strip('**').strip()
+                            break
+                    
+                    if not title:
+                        title = post.get('topic', 'Untitled')
+                    
+                    f.write(f"### LinkedIn Post {i}: {title}\n\n")
+                    f.write(f"{content}\n\n")
+                    word_count = len(content.split())
+                    f.write(f"Word count: {word_count}\n\n")
                     f.write("----------\n\n")
             
             # Write Twitter posts
             if "twitter_posts" in content_data and content_data["twitter_posts"]:
                 f.write(f"## TWITTER POSTS\n\n")
                 for i, post in enumerate(content_data["twitter_posts"], 1):
-                    f.write(f"### Twitter Post {i}: {post.get('topic', 'Untitled')}\n\n")
-                    f.write(f"{post.get('edited_content', post.get('content', 'No content'))}\n\n")
-                    f.write(f"Character count: {post.get('char_count', 'Unknown')}\n\n")
+                    content = post.get('edited_content', post.get('content', ''))
+                    
+                    # For Twitter, use the first line as title if it's in quotes
+                    title = None
+                    if content.strip().startswith('"'):
+                        title_end = content.find('"', 1)
+                        if title_end != -1:
+                            title = content[1:title_end]
+                    
+                    if not title:
+                        title = post.get('topic', 'Untitled')
+                    
+                    f.write(f"### Twitter Post {i}: {title}\n\n")
+                    f.write(f"{content}\n\n")
+                    char_count = len(content)
+                    f.write(f"Character count: {char_count}\n\n")
                     f.write("----------\n\n")
         
         return {
@@ -741,74 +791,51 @@ def save_output(content_data, output_file="repurposed_content.txt"):
             "error": f"Failed to save output file: {str(e)}"
         }
 
-def generate_linkedin_post(topic, transcript):
-    """
-    Generates a LinkedIn post based on a topic and transcript.
+def _generate_platform_content(self, platform):
+    """Generate content for a specific platform."""
+    logging.info(f"Generating {platform} content")
     
-    Args:
-        topic (dict): The topic information with title and description
-        transcript (str): The refined transcript text
-        
-    Returns:
-        dict: A dictionary with generation result and LinkedIn post if successful
-    """
-    if not topic or not transcript:
-        return {
-            "success": False,
-            "error": "Missing required inputs (topic or transcript)."
-        }
+    # Filter topics by platform
+    platform_topics = [t for t in self.content_data["topics"] if t.get("platform") == platform]
     
-    logging.info(f"Generating LinkedIn post for topic: {topic.get('title', 'Unknown')}")
+    # Set limits for each platform
+    limits = {
+        "blog": 1,
+        "linkedin": 2,
+        "twitter": 5
+    }
     
-    try:
-        # Use Gemini to generate the LinkedIn post
-        gemini_model = genai.GenerativeModel(model_name="gemini-1.5-pro", temperature=0.7)
-        
-        prompt = f"""
-        Create a professional LinkedIn post of up to 100 words based on the following topic and transcript.
-        
-        Topic: {topic.get('title', 'Unknown')}
-        Topic Description: {topic.get('description', 'No description provided')}
-        
-        Use information from this transcript:
-        {transcript[:3000]}  # Limit transcript length to avoid hitting token limits
-        
-        The LinkedIn post should:
-        - Begin with a strong opening line that grabs attention
-        - Focus on one key insight or takeaway
-        - Be written in a professional, conversational tone
-        - Use short paragraphs (1-2 sentences)
-        - Include a thought-provoking question or call-to-action
-        - End with 3-5 relevant hashtags
-        
-        Format the post with appropriate line breaks for readability on LinkedIn.
-        """
-        
-        response = gemini_model.generate_content(prompt)
-        
-        if response and hasattr(response, 'text'):
-            linkedin_post = response.text.strip()
-            
-            # Verify word count
-            word_count = len(linkedin_post.split())
-            if word_count > 110:  # Allow a small buffer over 100
-                logging.warning(f"LinkedIn post exceeds 100 words (actual: {word_count}). It may need editing.")
-            
-            return {
-                "success": True,
-                "topic": topic.get('title', 'Unknown'),
-                "content": linkedin_post,
-                "word_count": word_count
-            }
+    # Use only the required number of topics
+    topics_to_use = platform_topics[:limits[platform]]
+    
+    for topic in topics_to_use:
+        # Generate content
+        if platform == "blog":
+            result = generate_blog_post(topic, self.content_data["refined_transcript"])
+        elif platform == "linkedin":
+            result = generate_linkedin_post(topic, self.content_data["refined_transcript"])
+        elif platform == "twitter":
+            result = generate_twitter_post(topic, self.content_data["refined_transcript"])
         else:
-            return {
-                "success": False,
-                "error": "Failed to generate LinkedIn post. Empty or invalid response from Gemini."
-            }
-    
-    except Exception as e:
-        logging.error(f"Error during LinkedIn post generation: {str(e)}")
-        return {
-            "success": False,
-            "error": f"LinkedIn post generation error: {str(e)}"
-        }
+            continue
+        
+        if not result.get("success", False):
+            logging.warning(f"Failed to generate {platform} content for topic: {topic.get('title', 'Unknown')}")
+            continue
+        
+        # Edit content
+        if platform == "blog":
+            edit_result = edit_blog_post(result["content"])
+        elif platform == "linkedin":
+            edit_result = edit_linkedin_post(result["content"])
+        elif platform == "twitter":
+            edit_result = edit_twitter_post(result["content"])
+        else:
+            edit_result = result
+        
+        if not edit_result.get("success", False):
+            logging.warning(f"Failed to edit {platform} content for topic: {topic.get('title', 'Unknown')}")
+            edit_result = result
+        
+        # Store the content
+        self.content_data[f"{platform}_posts"].append(edit_result)

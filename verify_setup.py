@@ -2,34 +2,33 @@ import os
 import logging
 from dotenv import load_dotenv
 from apify_client import ApifyClient
-import google.generativeai as genai
+from openai import OpenAI
 
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-def verify_environment():
+# Load environment variables
+load_dotenv()
+
+# Required API keys and their descriptions
+required_keys = {
+    'APIFY_API_KEY': 'Apify',
+    'DEEPSEEK_API_KEY': 'DeepSeek'
+}
+
+def verify_env():
     """
     Verify that all required environment variables are set.
     """
-    load_dotenv()
+    missing_keys = []
+    for key in required_keys:
+        if not os.getenv(key):
+            missing_keys.append(key)
     
-    required_vars = {
-        'APIFY_API_KEY': 'Apify',
-        'GEMINI_API_KEY': 'Google Gemini'
-    }
-    
-    missing_vars = []
-    for var, service in required_vars.items():
-        if not os.getenv(var):
-            missing_vars.append(f"{var} ({service})")
-    
-    if missing_vars:
+    if missing_keys:
         logging.error("Missing required environment variables:")
-        for var in missing_vars:
-            logging.error(f"- {var}")
+        for key in missing_keys:
+            logging.error(f"- {key} ({required_keys[key]})")
         return False
     
     logging.info("✓ All required environment variables are set")
@@ -41,66 +40,64 @@ def verify_apify():
     """
     try:
         client = ApifyClient(os.getenv('APIFY_API_KEY'))
-        user_info = client.user().get()
-        
-        logging.info("✓ Successfully connected to Apify")
-        logging.info(f"  Username: {user_info['username']}")
-        logging.info(f"  Plan: {user_info.get('plan', 'Unknown')}")
+        me = client.user().get()
+        logging.info("✓ Successfully connected to Apify API")
         return True
-    
     except Exception as e:
-        logging.error(f"Failed to connect to Apify: {str(e)}")
+        logging.error(f"Failed to connect to Apify API: {str(e)}")
         return False
 
-def verify_gemini():
+def verify_deepseek():
     """
-    Verify Google Gemini API connection and access.
+    Verify DeepSeek API connection and access.
     """
     try:
-        genai.configure(api_key=os.getenv('GEMINI_API_KEY'))
-        model = genai.GenerativeModel('gemini-1.5-pro')
+        client = OpenAI(
+            api_key=os.getenv('DEEPSEEK_API_KEY'),
+            base_url="https://api.deepseek.com/v1"
+        )
         
-        # Test with a simple prompt
-        response = model.generate_content("Hello, are you working?")
+        response = client.chat.completions.create(
+            model="deepseek-chat",
+            messages=[{"role": "user", "content": "Say hello"}],
+            temperature=0.7,
+            max_tokens=10
+        )
         
-        if response and hasattr(response, 'text'):
-            logging.info("✓ Successfully connected to Google Gemini API")
+        if response.choices[0].message.content:
+            logging.info("✓ Successfully connected to DeepSeek API")
             return True
         else:
-            logging.error("Failed to get valid response from Gemini API")
+            logging.error("Failed to get valid response from DeepSeek API")
             return False
-    
+            
     except Exception as e:
-        logging.error(f"Failed to connect to Gemini API: {str(e)}")
+        logging.error(f"Failed to connect to DeepSeek API: {str(e)}")
         return False
 
 def main():
     """
-    Run all verification checks.
+    Run all verifications and report status.
     """
-    logging.info("Starting setup verification...")
+    logging.info("Verifying setup...")
     
-    # Check environment variables
-    env_ok = verify_environment()
+    env_ok = verify_env()
+    apify_ok = verify_apify()
+    deepseek_ok = verify_deepseek()
     
-    # Only proceed with API checks if environment is set up
-    if env_ok:
-        apify_ok = verify_apify()
-        gemini_ok = verify_gemini()
-        
-        # Print final results
-        logging.info("\n=== Verification Results ===")
-        logging.info(f"Environment Variables: {'✓' if env_ok else '✗'}")
-        logging.info(f"Apify API: {'✓' if apify_ok else '✗'}")
-        logging.info(f"Gemini API: {'✓' if gemini_ok else '✗'}")
-        
-        all_ok = env_ok and apify_ok and gemini_ok
-        logging.info(f"\nOverall Status: {'READY' if all_ok else 'NOT READY'}")
-        
-        return all_ok
+    logging.info("\nVerification Results:")
+    logging.info(f"Environment Variables: {'✓' if env_ok else '✗'}")
+    logging.info(f"Apify API: {'✓' if apify_ok else '✗'}")
+    logging.info(f"DeepSeek API: {'✓' if deepseek_ok else '✗'}")
+    
+    all_ok = env_ok and apify_ok and deepseek_ok
+    
+    if all_ok:
+        logging.info("\n✓ All systems verified and ready")
     else:
-        logging.error("\nSetup verification failed: Missing environment variables")
-        return False
+        logging.error("\n✗ Some verifications failed. Please check the logs above.")
+    
+    return all_ok
 
 if __name__ == "__main__":
     main()

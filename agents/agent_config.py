@@ -46,7 +46,7 @@ def get_base_config():
     return {
         "config_list": [
             {
-                "model": "gpt-4-turbo-preview",
+                "model": "gpt-3.5-turbo",
                 "api_key": OPENAI_API_KEY
             }
         ]

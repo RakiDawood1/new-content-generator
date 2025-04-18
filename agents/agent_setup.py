@@ -227,7 +227,7 @@ class RepurposerAgentSystem:
             self.content_data["transcript"] = extraction_result["transcript"]
             
             # Log the transcript being passed to refinement
-            logging.warning(f"Transcript passed to refinement (first 500 chars): '{self.content_data['transcript'][:500]}'")
+            logging.warning(f"Transcript word count: {len(self.content_data['transcript'].split())} words, character count: {len(self.content_data['transcript'])}")
             
             # Step 2: Refine transcript
             logging.info("Step 2: Refining the transcript")

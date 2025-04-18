@@ -179,7 +179,7 @@ def extract_youtube_transcript(url):
                 logging.warning("Captions list is empty after retrieving from video_data.")
 
             # Log final text using WARNING level BEFORE the check
-            logging.warning(f"Transcript passed to refinement (first 500 chars): '{transcript_text[:500]}'")
+            logging.warning(f"Transcript extracted successfully (first 500 chars for log only): '{transcript_text[:500]}...'")
             
             # Check if transcript is empty OR whitespace only
             if not transcript_text or not transcript_text.strip():
@@ -238,6 +238,7 @@ def call_deepseek_with_retry(prompt, max_retries=3, initial_wait=2):
 def refine_transcript(transcript):
     """
     Refines a transcript using DeepSeek to fix errors and improve quality.
+    Handles longer transcripts by processing them in chunks and joining results.
     """
     if not transcript:
         return {
@@ -248,23 +249,66 @@ def refine_transcript(transcript):
     try:
         logging.info("Refining transcript with DeepSeek...")
         
-        # Prepare the prompt
-        prompt = f"""
-        Please refine this transcript to improve readability and clarity.
-        Fix any grammar, punctuation, or formatting issues while preserving the original meaning.
+        # Process transcript in chunks if it's long
+        max_chunk_size = 3000
+        results = []
         
-        Transcript:
-        {transcript[:3000]}  # Limit length to avoid token limits
+        if len(transcript) <= max_chunk_size:
+            # For small transcripts, process in one go
+            prompt = f"""
+            Please refine this transcript to improve readability and clarity.
+            Fix any grammar, punctuation, or formatting issues while preserving the original meaning.
+            
+            Transcript:
+            {transcript}
+            
+            Return only the refined text without any additional comments.
+            """
+            
+            refined_chunk = call_deepseek_with_retry(prompt)
+            if refined_chunk:
+                results.append(refined_chunk.strip())
+        else:
+            # For longer transcripts, process in overlapping chunks
+            chunks = []
+            overlap = 300  # Overlap to maintain context between chunks
+            
+            for i in range(0, len(transcript), max_chunk_size - overlap):
+                end_idx = min(i + max_chunk_size, len(transcript))
+                chunk = transcript[i:end_idx]
+                chunks.append(chunk)
+            
+            logging.info(f"Processing transcript in {len(chunks)} chunks")
+            
+            for i, chunk in enumerate(chunks):
+                context = ""
+                if i > 0:
+                    context = f"This is continuation of a longer transcript (chunk {i+1} of {len(chunks)})."
+                
+                prompt = f"""
+                Please refine this transcript chunk to improve readability and clarity.
+                Fix any grammar, punctuation, or formatting issues while preserving the original meaning.
+                {context}
+                
+                Transcript chunk:
+                {chunk}
+                
+                Return only the refined text without any additional comments.
+                """
+                
+                refined_chunk = call_deepseek_with_retry(prompt)
+                if refined_chunk:
+                    results.append(refined_chunk.strip())
+                    logging.info(f"Processed chunk {i+1}/{len(chunks)}")
+                else:
+                    logging.warning(f"Failed to refine chunk {i+1}/{len(chunks)}")
         
-        Return only the refined text without any additional comments.
-        """
-        
-        refined_transcript = call_deepseek_with_retry(prompt)
-        
-        if refined_transcript:
+        # Combine all refined chunks
+        if results:
+            refined_transcript = " ".join(results)
             return {
                 "success": True,
-                "refined_transcript": refined_transcript.strip()
+                "refined_transcript": refined_transcript
             }
         else:
             return {
@@ -373,61 +417,83 @@ def generate_content_topics(transcript, content_type="all"):
 def generate_blog_post(topic, transcript):
     """
     Generate a blog post based on the topic and transcript.
-    For longer transcripts, it searches for relevant sections to use as context.
+    Uses a topic-aware search approach to find the most relevant sections of the transcript.
     """
     try:
-        # First, find the most relevant chunk of the transcript for this topic
-        search_prompt = f"""
-        Rate how relevant this transcript chunk is to the following topic on a scale of 1-5:
+        # Create a summary of the transcript to use for context
+        summary_prompt = f"""
+        Provide a brief summary (150-200 words) of this transcript focused on the core ideas and insights:
         
         Topic:
         {json.dumps(topic, indent=2)}
         
-        Transcript chunk:
-        {transcript[:2000]}
+        Transcript (first part):
+        {transcript[:min(5000, len(transcript))]}
         
-        Return ONLY a single number 1-5, where 5 is most relevant.
+        Return only the summary text.
         """
         
-        relevance_response = call_deepseek_with_retry(prompt=search_prompt)
-        # Extract just the first number from the response
-        relevance_score = int(''.join(filter(str.isdigit, relevance_response[:2])) or "1")
+        transcript_summary = call_deepseek_with_retry(prompt=summary_prompt)
         
-        # If first chunk isn't very relevant (score < 3), check middle and end chunks
-        if relevance_score < 3 and len(transcript) > 4000:
+        # Find relevant sections based on keyword matching
+        key_terms = topic["key_points"] + [topic["title"], topic["description"]]
+        key_phrases = [term.lower() for term in key_terms if len(term.split()) > 1]
+        key_words = [word.lower() for term in key_terms for word in term.split() if len(word) > 3]
+        
+        transcript_chunks = []
+        # Split transcript into chunks for scanning
+        chunk_size = 1000
+        overlap = 100
+        
+        for i in range(0, len(transcript), chunk_size - overlap):
+            chunk = transcript[i:min(i + chunk_size, len(transcript))]
+            chunk_lower = chunk.lower()
+            
+            # Score the chunk based on key term matches
+            score = 0
+            for phrase in key_phrases:
+                if phrase in chunk_lower:
+                    score += 5  # Phrases are worth more
+            
+            for word in key_words:
+                if word in chunk_lower:
+                    score += 1
+                    
+            if score > 0:
+                transcript_chunks.append({"text": chunk, "score": score})
+        
+        # Sort chunks by relevance score
+        transcript_chunks.sort(key=lambda x: x["score"], reverse=True)
+        
+        # Take top 3 most relevant chunks
+        relevant_chunks = [chunk["text"] for chunk in transcript_chunks[:3]]
+        
+        # If no relevant chunks found, use the beginning, middle and end sections
+        if not relevant_chunks and len(transcript) > 3000:
+            start_chunk = transcript[:1000]
             mid_point = len(transcript) // 2
-            mid_chunk = transcript[mid_point-1000:mid_point+1000]
-            end_chunk = transcript[-2000:]
+            mid_chunk = transcript[mid_point-500:mid_point+500]
+            end_chunk = transcript[-1000:]
+            relevant_chunks = [start_chunk, mid_chunk, end_chunk]
+        elif not relevant_chunks:
+            # For short transcripts, use the whole thing
+            relevant_chunks = [transcript]
             
-            mid_response = call_deepseek_with_retry(
-                prompt=search_prompt.replace(transcript[:2000], mid_chunk)
-            )
-            mid_score = int(''.join(filter(str.isdigit, mid_response[:2])) or "1")
-            
-            end_response = call_deepseek_with_retry(
-                prompt=search_prompt.replace(transcript[:2000], end_chunk)
-            )
-            end_score = int(''.join(filter(str.isdigit, end_response[:2])) or "1")
-            
-            # Use the most relevant chunk
-            if mid_score > relevance_score and mid_score > end_score:
-                transcript_chunk = mid_chunk
-            elif end_score > relevance_score and end_score > mid_score:
-                transcript_chunk = end_chunk
-            else:
-                transcript_chunk = transcript[:2000]
-        else:
-            transcript_chunk = transcript[:2000]
+        # Combine chunks and summary for context
+        context = "\n\n".join([
+            f"SUMMARY: {transcript_summary}",
+            "RELEVANT SECTIONS:",
+            *relevant_chunks
+        ])
         
         prompt = f"""
-        Create a blog post (max 500 words) based on this topic and transcript chunk.
-        If the chunk seems incomplete or you need more context, focus on the aspects you can confidently write about.
+        Create a blog post (max 500 words) based on this topic and transcript information.
         
         Topic:
         {json.dumps(topic, indent=2)}
         
-        Transcript chunk to focus on:
-        {transcript_chunk}
+        Context from transcript:
+        {context}
         
         Guidelines:
         - Start with a clear title using markdown heading (# Title)
@@ -436,7 +502,6 @@ def generate_blog_post(topic, transcript):
         - Professional tone
         - Actionable insights
         - Strong conclusion
-        - If the chunk feels incomplete, acknowledge any limitations in coverage
         
         Return the blog post with proper markdown formatting.
         """
@@ -451,7 +516,7 @@ def generate_blog_post(topic, transcript):
             }
         else:
             return {
-                "success": False,
+                "success": False, 
                 "error": "Failed to generate blog post. Empty or invalid response from DeepSeek."
             }
             
@@ -467,6 +532,43 @@ def generate_twitter_post(topic, transcript):
     Generate a Twitter post based on the topic and transcript.
     """
     try:
+        # Find relevant section for this specific topic
+        key_terms = topic["key_points"] + [topic["title"], topic["description"]]
+        key_phrases = [term.lower() for term in key_terms if len(term.split()) > 1]
+        key_words = [word.lower() for term in key_terms for word in term.split() if len(word) > 3]
+        
+        # Find most relevant part of transcript for this topic
+        best_chunk = ""
+        best_score = 0
+        
+        # Scan transcript in smaller chunks for relevance
+        chunk_size = 500
+        overlap = 50
+        
+        for i in range(0, min(10000, len(transcript)), chunk_size - overlap):
+            chunk = transcript[i:min(i + chunk_size, len(transcript))]
+            chunk_lower = chunk.lower()
+            
+            # Score the chunk based on key term matches
+            score = 0
+            for phrase in key_phrases:
+                if phrase in chunk_lower:
+                    score += 5  # Phrases are worth more
+            
+            for word in key_words:
+                if word in chunk_lower:
+                    score += 1
+                    
+            if score > best_score:
+                best_score = score
+                best_chunk = chunk
+        
+        # If no high-scoring chunk found, use first 500 chars
+        if best_score == 0:
+            reference_text = transcript[:min(500, len(transcript))]
+        else:
+            reference_text = best_chunk
+            
         prompt = f"""
         Create an engaging tweet (max 280 characters) based on this topic and transcript.
         
@@ -474,7 +576,7 @@ def generate_twitter_post(topic, transcript):
         {json.dumps(topic, indent=2)}
         
         Reference material:
-        {transcript[:1000]}
+        {reference_text}
         
         Guidelines:
         - Attention-grabbing
@@ -637,22 +739,59 @@ def generate_linkedin_post(topic, transcript):
     Generate a LinkedIn post based on the topic and transcript.
     """
     try:
+        # Find most relevant section based on topic keywords
+        key_terms = topic["key_points"] + [topic["title"], topic["description"]]
+        key_phrases = [term.lower() for term in key_terms if len(term.split()) > 1]
+        key_words = [word.lower() for term in key_terms for word in term.split() if len(word) > 3]
+        
+        # Find relevant chunks
+        relevant_chunks = []
+        
+        # Scan transcript in chunks
+        chunk_size = 750
+        overlap = 100
+        
+        for i in range(0, min(8000, len(transcript)), chunk_size - overlap):
+            chunk = transcript[i:min(i + chunk_size, len(transcript))]
+            chunk_lower = chunk.lower()
+            
+            # Score the chunk based on key term matches
+            score = 0
+            for phrase in key_phrases:
+                if phrase in chunk_lower:
+                    score += 5  # Phrases are worth more
+            
+            for word in key_words:
+                if word in chunk_lower:
+                    score += 1
+                    
+            if score > 0:
+                relevant_chunks.append({"text": chunk, "score": score})
+        
+        # Sort and take top chunk
+        if relevant_chunks:
+            relevant_chunks.sort(key=lambda x: x["score"], reverse=True)
+            context = relevant_chunks[0]["text"]
+        else:
+            context = transcript[:min(1500, len(transcript))]
+            
         prompt = f"""
-        Create a LinkedIn post (max 100 words) based on this topic and transcript.
+        Create a professional LinkedIn post (max 100 words) based on this topic and transcript.
         
         Topic:
         {json.dumps(topic, indent=2)}
         
         Reference material:
-        {transcript[:1500]}
+        {context}
         
         Guidelines:
         - Professional tone
-        - Clear value proposition
-        - Include relevant hashtags
-        - Call to action
+        - Provide value or insight
+        - Clear structure (intro, key point, conclusion)
+        - Include 2-3 relevant hashtags
+        - End with a question or call-to-action
         
-        Return only the post text.
+        Return only the LinkedIn post text.
         """
         
         post_content = call_deepseek_with_retry(prompt)

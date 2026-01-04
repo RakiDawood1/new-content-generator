@@ -2,85 +2,76 @@
   <!-- Dark navy background -->
   <rect width="1200" height="350" fill="#0a0e27"/>
 
-  <!-- Wave pattern lines - progressive complexity converging to single point -->
+  <!-- Convergence point at approximately X=850, Y=175 -->
+  <!-- Then continuing as single unified line with wave pattern -->
 
-  <!-- Line 1 - White, thin, subtle -->
-  <path d="M 0,120 C 200,115 300,125 400,120 C 500,115 600,110 700,105 C 800,95 900,88 1000,82 C 1100,78 1150,176 1200,175"
-        stroke="#ffffff" stroke-width="1.5" fill="none" opacity="0.9"/>
-
-  <!-- Line 2 - Light gray, medium wave -->
-  <path d="M 0,145 C 180,145 280,150 380,148 C 480,145 580,140 680,135 C 780,128 880,120 980,115 C 1080,110 1150,178 1200,175"
-        stroke="#e0e0e0" stroke-width="2" fill="none" opacity="0.85"/>
-
-  <!-- Line 3 - Medium gray, gentle start -->
-  <path d="M 0,95 C 220,93 320,98 420,95 C 520,92 620,88 720,82 C 820,75 920,70 1020,68 C 1110,66 1160,172 1200,175"
-        stroke="#666666" stroke-width="1" fill="none" opacity="0.7"/>
-
-  <!-- Line 4 - White, increasing complexity -->
-  <path d="M 0,170 C 190,172 290,175 390,172 C 490,168 590,165 690,158 C 790,150 890,142 990,135 C 1090,130 1150,177 1200,175"
-        stroke="#ffffff" stroke-width="2.5" fill="none" opacity="1"/>
-
-  <!-- Line 5 - Light gray, more undulation -->
-  <path d="M 0,200 C 200,198 300,202 400,205 C 500,203 600,198 700,188 C 800,178 900,168 1000,158 C 1100,148 1160,180 1200,175"
-        stroke="#e0e0e0" stroke-width="1.5" fill="none" opacity="0.8"/>
-
-  <!-- Line 6 - White, complex right side -->
-  <path d="M 0,75 C 210,74 310,76 410,74 C 510,72 610,68 710,62 C 810,56 910,52 1010,50 C 1110,48 1160,170 1200,175"
-        stroke="#ffffff" stroke-width="1" fill="none" opacity="0.75"/>
-
-  <!-- Line 7 - Medium gray, wave pattern -->
-  <path d="M 0,225 C 195,227 295,230 395,228 C 495,225 595,220 695,212 C 795,202 895,192 995,182 C 1095,172 1155,176 1200,175"
-        stroke="#666666" stroke-width="2" fill="none" opacity="0.9"/>
-
-  <!-- Line 8 - Light gray, tight waves on right -->
-  <path d="M 0,110 C 205,108 305,112 405,110 C 505,107 605,103 705,96 C 805,90 905,85 1005,80 C 1105,75 1155,174 1200,175"
-        stroke="#e0e0e0" stroke-width="2.5" fill="none" opacity="0.95"/>
-
-  <!-- Line 9 - White, intense right complexity -->
-  <path d="M 0,185 C 185,187 285,190 385,188 C 485,185 585,180 685,172 C 785,165 885,158 985,152 C 1085,145 1145,177 1200,175"
-        stroke="#ffffff" stroke-width="1.5" fill="none" opacity="0.85"/>
-
-  <!-- Line 10 - Medium gray, oscillating -->
-  <path d="M 0,250 C 200,252 300,255 400,253 C 500,250 600,245 700,235 C 800,225 900,210 1000,195 C 1100,185 1165,178 1200,175"
-        stroke="#666666" stroke-width="1.5" fill="none" opacity="0.75"/>
-
-  <!-- Line 11 - Light gray, weaving pattern -->
-  <path d="M 0,60 C 215,59 315,61 415,59 C 515,57 615,53 715,47 C 815,42 915,38 1015,36 C 1115,34 1165,168 1200,175"
+  <!-- Lines converging from top -->
+  <path d="M 0,60 C 300,58 500,55 700,65 C 750,70 800,120 850,175"
         stroke="#e0e0e0" stroke-width="1" fill="none" opacity="0.7"/>
 
-  <!-- Line 12 - White, dramatic curves -->
-  <path d="M 0,155 C 188,157 288,160 388,158 C 488,155 588,150 688,142 C 788,135 888,128 988,122 C 1088,118 1148,174 1200,175"
-        stroke="#ffffff" stroke-width="2" fill="none" opacity="1"/>
+  <path d="M 0,75 C 300,73 500,70 700,78 C 750,85 800,125 850,175"
+        stroke="#ffffff" stroke-width="1" fill="none" opacity="0.75"/>
 
-  <!-- Line 13 - Medium gray, dense right side -->
-  <path d="M 0,215 C 192,217 292,220 392,218 C 492,215 592,210 692,202 C 792,192 892,182 992,172 C 1092,165 1158,176 1200,175"
-        stroke="#666666" stroke-width="2.5" fill="none" opacity="0.8"/>
-
-  <!-- Line 14 - Light gray, flowing -->
-  <path d="M 0,130 C 208,128 308,132 408,130 C 508,127 608,123 708,116 C 808,110 908,105 1008,100 C 1108,95 1158,173 1200,175"
-        stroke="#e0e0e0" stroke-width="1.5" fill="none" opacity="0.88"/>
-
-  <!-- Line 15 - White, intricate waves -->
-  <path d="M 0,240 C 198,242 298,245 398,243 C 498,240 598,235 698,225 C 798,215 898,202 998,188 C 1098,178 1160,176 1200,175"
-        stroke="#ffffff" stroke-width="1" fill="none" opacity="0.9"/>
-
-  <!-- Line 16 - Medium gray, tight oscillations right -->
-  <path d="M 0,85 C 212,83 312,86 412,84 C 512,81 612,77 712,70 C 812,65 912,60 1012,58 C 1112,56 1162,171 1200,175"
+  <path d="M 0,85 C 300,83 500,82 700,88 C 750,95 800,130 850,175"
         stroke="#666666" stroke-width="1.5" fill="none" opacity="0.85"/>
 
-  <!-- Line 17 - Light gray, complex interweaving -->
-  <path d="M 0,190 C 186,192 286,195 386,193 C 486,190 586,185 686,177 C 786,170 886,162 986,155 C 1086,148 1146,175 1200,175"
-        stroke="#e0e0e0" stroke-width="2" fill="none" opacity="0.78"/>
+  <path d="M 0,95 C 300,93 500,92 700,98 C 750,105 800,135 850,175"
+        stroke="#e0e0e0" stroke-width="1.5" fill="none" opacity="0.8"/>
 
-  <!-- Line 18 - White, dense wave pattern -->
-  <path d="M 0,265 C 195,267 295,270 395,268 C 495,265 595,260 695,250 C 795,240 895,225 995,208 C 1095,192 1162,178 1200,175"
-        stroke="#ffffff" stroke-width="2.5" fill="none" opacity="0.92"/>
+  <path d="M 0,105 C 300,103 500,102 700,108 C 750,115 800,140 850,175"
+        stroke="#ffffff" stroke-width="2" fill="none" opacity="0.95"/>
 
-  <!-- Line 19 - Medium gray, final layer -->
-  <path d="M 0,140 C 203,138 303,142 403,140 C 503,137 603,133 703,126 C 803,120 903,115 1003,110 C 1103,105 1153,174 1200,175"
+  <path d="M 0,110 C 300,108 500,108 700,115 C 750,122 800,143 850,175"
+        stroke="#e0e0e0" stroke-width="2.5" fill="none" opacity="0.95"/>
+
+  <path d="M 0,120 C 300,118 500,118 700,125 C 750,132 800,148 850,175"
+        stroke="#ffffff" stroke-width="1.5" fill="none" opacity="0.9"/>
+
+  <path d="M 0,130 C 300,128 500,128 700,133 C 750,140 800,152 850,175"
+        stroke="#e0e0e0" stroke-width="1.5" fill="none" opacity="0.88"/>
+
+  <path d="M 0,140 C 300,138 500,138 700,142 C 750,148 800,157 850,175"
         stroke="#666666" stroke-width="1" fill="none" opacity="0.73"/>
 
-  <!-- Line 20 - Light gray, sophisticated finish -->
-  <path d="M 0,105 C 218,103 318,107 418,105 C 518,102 618,98 718,91 C 818,85 918,80 1018,76 C 1118,72 1168,173 1200,175"
-        stroke="#e0e0e0" stroke-width="1.5" fill="none" opacity="0.95"/>
+  <path d="M 0,145 C 300,143 500,145 700,148 C 750,153 800,160 850,175"
+        stroke="#e0e0e0" stroke-width="2" fill="none" opacity="0.85"/>
+
+  <!-- Lines converging from bottom -->
+  <path d="M 0,265 C 300,263 500,258 700,245 C 750,230 800,200 850,175"
+        stroke="#ffffff" stroke-width="2.5" fill="none" opacity="0.92"/>
+
+  <path d="M 0,250 C 300,248 500,245 700,235 C 750,220 800,195 850,175"
+        stroke="#666666" stroke-width="1.5" fill="none" opacity="0.75"/>
+
+  <path d="M 0,240 C 300,238 500,235 700,228 C 750,215 800,193 850,175"
+        stroke="#ffffff" stroke-width="1" fill="none" opacity="0.9"/>
+
+  <path d="M 0,225 C 300,223 500,222 700,218 C 750,208 800,190 850,175"
+        stroke="#666666" stroke-width="2" fill="none" opacity="0.9"/>
+
+  <path d="M 0,215 C 300,213 500,212 700,210 C 750,200 800,187 850,175"
+        stroke="#666666" stroke-width="2.5" fill="none" opacity="0.8"/>
+
+  <path d="M 0,200 C 300,198 500,198 700,198 C 750,192 800,183 850,175"
+        stroke="#e0e0e0" stroke-width="1.5" fill="none" opacity="0.8"/>
+
+  <path d="M 0,190 C 300,188 500,188 700,190 C 750,187 800,180 850,175"
+        stroke="#e0e0e0" stroke-width="2" fill="none" opacity="0.78"/>
+
+  <path d="M 0,185 C 300,183 500,183 700,185 C 750,183 800,178 850,175"
+        stroke="#ffffff" stroke-width="1.5" fill="none" opacity="0.85"/>
+
+  <path d="M 0,170 C 300,168 500,170 700,172 C 750,173 800,174 850,175"
+        stroke="#ffffff" stroke-width="2.5" fill="none" opacity="1"/>
+
+  <path d="M 0,155 C 300,153 500,155 700,162 C 750,167 800,172 850,175"
+        stroke="#ffffff" stroke-width="2" fill="none" opacity="1"/>
+
+  <!-- Single unified line continuing from convergence point with wave pattern -->
+  <path d="M 850,175 C 900,175 925,185 950,175 C 975,165 1000,185 1025,175 C 1050,165 1075,185 1100,175 C 1125,165 1150,185 1175,175 L 1200,175"
+        stroke="#ffffff" stroke-width="3" fill="none" opacity="1"/>
+
+  <!-- Additional unified lines for thickness/glow effect -->
+  <path d="M 850,175 C 900,175 925,185 950,175 C 975,165 1000,185 1025,175 C 1050,165 1075,185 1100,175 C 1125,165 1150,185 1175,175 L 1200,175"
+        stroke="#e0e0e0" stroke-width="2" fill="none" opacity="0.6"/>
 </svg>
